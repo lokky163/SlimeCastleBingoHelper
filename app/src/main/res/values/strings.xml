@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">BingoHelper</string>
+    <string name="accessibility_service_label">BingoHelper</string>
+    <string name="accessibility_service_description">Служба нужна только для того, чтобы помощник мог нажимать на клетки игрового поля. Она не читает и не передаёт содержимое экрана.</string>
+</resources>
