@@ -50,21 +50,10 @@ class TapAccessibilityService : AccessibilityService() {
     }
 
     /** A short tap at [x], [y] in screen pixels. [onResult] is called on the main thread. */
-    fun tap(x: Float, y: Float, onResult: (Boolean) -> Unit) {
+    fun tap(x: Float, y: Float, durationMs: Long = 55L, onResult: (Boolean) -> Unit) {
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, 55L))
-            .build()
-
-        dispatch(gesture, x, y, onResult)
-    }
-
-    /** Two taps at the safe dismissal point, with 100 ms after the first tap. */
-    fun tapTwice(x: Float, y: Float, onResult: (Boolean) -> Unit) {
-        val path = Path().apply { moveTo(x, y) }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, 20L))
-            .addStroke(GestureDescription.StrokeDescription(path, 120L, 20L))
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
             .build()
 
         dispatch(gesture, x, y, onResult)

@@ -74,6 +74,7 @@ class OverlayService : Service() {
         /** Popups are closed by two taps in the free bottom-right corner of the game. */
         private const val DISMISS_X = 0.90f
         private const val DISMISS_Y = 0.96f
+        private const val DISMISS_TAP_GAP_MS = 100L
 
         private const val PANEL_WIDTH_DP = 336
         private const val HINT_POLL_INTERVAL_MS = 100L
@@ -1399,6 +1400,18 @@ class OverlayService : Service() {
             setStatus("Сначала распознайте поле.")
             return
         }
+        if (!hintEnabled) {
+            val bounds = panelBounds()
+            if (bounds == null) {
+                setStatus("Не удалось определить положение меню. Попробуйте включить подсказку ещё раз.")
+                return
+            }
+            val board = calibration?.board ?: return
+            if (RectF.intersects(bounds, board)) {
+                setStatus("Подсказку включить нельзя: меню перекрывает поле. Сверните или переместите меню.")
+                return
+            }
+        }
 
         setHintEnabled(!hintEnabled)
         if (hintEnabled) shownGroups.clear()
@@ -1417,6 +1430,17 @@ class OverlayService : Service() {
         )
     }
 
+    private fun stopHintIfMenuBlocksBoard(): Boolean {
+        val bounds = panelBounds()
+        val board = calibration?.board
+        if (bounds != null && board != null && !RectF.intersects(bounds, board)) return false
+        setHintEnabled(false)
+        removeGrid()
+        refreshPanel()
+        setStatus("Подсказка выключена: меню перекрывает поле. Сверните или переместите меню.")
+        return true
+    }
+
     private fun scheduleOverlay(delayMs: Long) {
         val seq = overlaySeq
         mainHandler.postDelayed({
@@ -1424,11 +1448,13 @@ class OverlayService : Service() {
             if (recognizing || capturing || shownGroups.isNotEmpty()) {
                 scheduleOverlay(HINT_POLL_INTERVAL_MS)
             } else {
+                if (stopHintIfMenuBlocksBoard()) return@postDelayed
                 val nextCheckAt = SystemClock.uptimeMillis() + HINT_POLL_INTERVAL_MS
                 captureFrame(detectResetButtons = false, fresh = false) { frame ->
                     if (!hintEnabled || seq != overlaySeq || autoRunning) {
                         return@captureFrame
                     }
+                    if (stopHintIfMenuBlocksBoard()) return@captureFrame
                     if (frame != null && shownGroups.isEmpty()) displayFrame(frame)
                     scheduleOverlay(nextCheckAt - SystemClock.uptimeMillis())
                 }
@@ -1562,7 +1588,7 @@ class OverlayService : Service() {
         pendingCell = -1
 
         if (wasRunning) {
-            setHintEnabled(hintBeforeAuto)
+            setHintEnabled(hintBeforeAuto && !panelOverlapsBoard())
             screenCapture?.setFrameInterval(
                 if (hintEnabled) HINT_POLL_INTERVAL_MS else DEFAULT_POLL_INTERVAL_MS,
             )
@@ -1602,6 +1628,7 @@ class OverlayService : Service() {
 
     private fun autoTick() {
         if (!autoRunning) return
+        if (stopAutoIfMenuBlocks()) return
         if (recognizing || capturing) {
             scheduleAuto(DEFAULT_POLL_INTERVAL_MS)
             return
@@ -1615,6 +1642,7 @@ class OverlayService : Service() {
         captureFrame(detectResetButtons = true, freshTimeoutMs = AUTO_FRAME_TIMEOUT_MS) { frame ->
             if (seq != autoSeq) return@captureFrame
             if (!autoRunning) return@captureFrame
+            if (stopAutoIfMenuBlocks()) return@captureFrame
 
             if (frame == null) {
                 frameFailures++
@@ -1764,13 +1792,23 @@ class OverlayService : Service() {
     }
 
     private fun tapDismissTwice(onDone: () -> Unit) {
-        tap(displayWidth * DISMISS_X, displayHeight * DISMISS_Y, twice = true) { ok ->
-            if (!autoRunning) return@tap
-            if (!ok) {
-                stopAuto("Не удалось выполнить нажатие")
-                return@tap
+        val x = displayWidth * DISMISS_X
+        val y = displayHeight * DISMISS_Y
+        fun dismissOnce(then: () -> Unit) {
+            tap(x, y, quick = true) { ok ->
+                if (!autoRunning) return@tap
+                if (!ok) {
+                    stopAuto("Не удалось выполнить нажатие")
+                    return@tap
+                }
+                then()
             }
-            onDone()
+        }
+        dismissOnce {
+            val seq = autoSeq
+            mainHandler.postDelayed({
+                if (autoRunning && seq == autoSeq) dismissOnce(onDone)
+            }, DISMISS_TAP_GAP_MS)
         }
     }
 
@@ -1882,34 +1920,27 @@ class OverlayService : Service() {
             RectF.intersects(bounds, dismissArea)
     }
 
+    private fun stopAutoIfMenuBlocks(): Boolean {
+        val cal = calibration ?: run {
+            stopAuto("Калибровка потеряна.")
+            return true
+        }
+        val bounds = panelBounds()
+        if (bounds == null || panelBlocksAuto(bounds, cal)) {
+            stopAuto("Автоклики остановлены: меню мешает нажатиям. Сверните или переместите меню.")
+            return true
+        }
+        return false
+    }
+
     private fun panelOverlapsBoard(): Boolean {
         val bounds = panelBounds() ?: return false
         val board = calibration?.board ?: return false
         return RectF.intersects(bounds, board)
     }
 
-    private fun ensurePanelClear(x: Float, y: Float): Boolean {
-        val panel = menuView ?: return false
-        val params = menuParams ?: return false
-        val bounds = panelBounds() ?: return false
-        val board = calibration?.board
-        if ((board != null && RectF.intersects(bounds, board)) || bounds.contains(x, y) ||
-            bounds.contains(displayWidth * DISMISS_X, displayHeight * DISMISS_Y)
-        ) {
-            params.x = dp(6)
-            params.y = minPanelY
-            try {
-                windowManager.updateViewLayout(panel, params)
-            } catch (t: Throwable) {
-                Log.w(TAG, "Cannot park panel outside the board", t)
-            }
-            return true
-        }
-        return false
-    }
-
-    private fun tap(x: Float, y: Float, twice: Boolean = false, onResult: (Boolean) -> Unit) {
-        val panelMoved = ensurePanelClear(x, y)
+    private fun tap(x: Float, y: Float, quick: Boolean = false, onResult: (Boolean) -> Unit) {
+        if (stopAutoIfMenuBlocks()) return
         val seq = autoSeq
         val grid = gridView
         val restoreGrid = grid?.visibility == View.VISIBLE
@@ -1931,14 +1962,15 @@ class OverlayService : Service() {
                 finish(false)
                 return@postDelayed
             }
+            // Recheck immediately before every gesture, including the second dismissal tap.
+            if (stopAutoIfMenuBlocks()) return@postDelayed
             val service = TapAccessibilityService.instance
             if (service == null) {
                 finish(false)
             } else {
-                if (twice) service.tapTwice(x, y) { ok -> finish(ok) }
-                else service.tap(x, y) { ok -> finish(ok) }
+                service.tap(x, y, if (quick) 20L else 55L) { ok -> finish(ok) }
             }
-        }, if (panelMoved || restoreGrid || outline.isNotEmpty()) 90L else 0L)
+        }, if (restoreGrid || outline.isNotEmpty()) 90L else 0L)
     }
 
     // ---------------------------------------------------------------- helpers
