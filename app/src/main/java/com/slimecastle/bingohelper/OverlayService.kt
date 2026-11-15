@@ -205,11 +205,9 @@ class OverlayService : Service() {
     private var restartWaitMs = AppPrefs.DEFAULT_RESTART_WAIT_MS
     private var rewardCloseWaitMs = AppPrefs.DEFAULT_REWARD_CLOSE_WAIT_MS
     private var lastBoardRecognizedAt = 0L
-    private var roundsDone = 0
+    private val roundProgress = RoundProgress()
     private var roundLimit = 0
     private var resetAttempts = 0
-    /** A reset was tapped; do not use the previous round's opened cells on the new board. */
-    private var awaitingNewBoard = false
 
     // Autoclicks suspend hints temporarily, preserving the user's choice for later.
     private var hintEnabled = false
@@ -1547,12 +1545,11 @@ class OverlayService : Service() {
         moveWaitMs = moveWait
         restartWaitMs = restartWait
         rewardCloseWaitMs = rewardCloseWait
-        roundsDone = 0
+        roundProgress.reset()
         autoField = Field()
         pendingCell = -1
         lastBoardRecognizedAt = SystemClock.uptimeMillis()
         resetAttempts = 0
-        awaitingNewBoard = false
         frameFailures = 0
         hintBeforeAuto = hintEnabled
         setHintEnabled(false)
@@ -1682,18 +1679,13 @@ class OverlayService : Service() {
             return
         }
 
-        if (awaitingNewBoard) {
+        if (roundProgress.awaitingNewBoard) {
             if (frame.closedCount >= 24) {
-                roundsDone++
-                awaitingNewBoard = false
+                roundProgress.onNewBoard()
                 resetAttempts = 0
                 autoField = Field()
                 pendingCell = -1
-                if (roundLimit > 0 && roundsDone >= roundLimit) {
-                    stopAuto("Готово: $roundsDone раунд(ов). Остановлено.")
-                    return
-                }
-                setStatus("Раунд $roundsDone завершён, начинаю следующий.")
+                setStatus("Перезапуск выполнен, делаю первый ход раунда ${roundProgress.roundsDone + 1}.")
             } else {
                 // A game animation or another popup can briefly show the old board.
                 dismissThenContinue(moveWaitMs.toLong())
@@ -1787,6 +1779,12 @@ class OverlayService : Service() {
                 stopAuto("Не удалось выполнить нажатие")
                 return@tap
             }
+            if (roundProgress.onCellTapped() && roundLimit > 0 &&
+                roundProgress.roundsDone >= roundLimit
+            ) {
+                stopAuto("Готово: ${roundProgress.roundsDone} раунд(ов). Остановлено.")
+                return@tap
+            }
             onDone()
         }
     }
@@ -1815,8 +1813,8 @@ class OverlayService : Service() {
     private fun restartRound() {
         val cal = calibration ?: return
 
-        if (roundLimit > 0 && roundsDone >= roundLimit) {
-            stopAuto("Готово: $roundsDone раунд(ов). Остановлено.")
+        if (roundLimit > 0 && roundProgress.roundsDone >= roundLimit) {
+            stopAuto("Готово: ${roundProgress.roundsDone} раунд(ов). Остановлено.")
             return
         }
 
@@ -1824,7 +1822,7 @@ class OverlayService : Service() {
         val mode = AppPrefs.resetMode(this)
         val rect = if (mode == AppPrefs.RESET_MODE_X10) buttons.last() else buttons.first()
 
-        setStatus("Нажимаю перезапуск ×$mode (${roundsDone + 1}${if (roundLimit > 0) "/$roundLimit" else ""})…")
+        setStatus("Нажимаю перезапуск ×$mode (${roundProgress.roundsDone + 1}${if (roundLimit > 0) "/$roundLimit" else ""})…")
 
         tap(rect.centerX(), rect.centerY()) { ok ->
             if (!autoRunning) return@tap
@@ -1832,7 +1830,7 @@ class OverlayService : Service() {
                 stopAuto("Не удалось нажать кнопку перезапуска")
                 return@tap
             }
-            awaitingNewBoard = true
+            roundProgress.onRestartTapped()
             afterAutoAction(restarted = true)
         }
     }
