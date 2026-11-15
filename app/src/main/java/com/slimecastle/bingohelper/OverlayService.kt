@@ -153,6 +153,7 @@ class OverlayService : Service() {
     private var roundsLimited: RadioButton? = null
     private var roundsEdit: EditText? = null
     private var moveWaitEdit: EditText? = null
+    private var beforeRestartWaitEdit: EditText? = null
     private var restartWaitEdit: EditText? = null
     private var rewardCloseWaitEdit: EditText? = null
     private var modeX1: RadioButton? = null
@@ -202,6 +203,7 @@ class OverlayService : Service() {
     private var autoField = Field()
     private var pendingCell = -1
     private var moveWaitMs = AppPrefs.DEFAULT_MOVE_WAIT_MS
+    private var beforeRestartWaitMs = AppPrefs.DEFAULT_BEFORE_RESTART_WAIT_MS
     private var restartWaitMs = AppPrefs.DEFAULT_RESTART_WAIT_MS
     private var rewardCloseWaitMs = AppPrefs.DEFAULT_REWARD_CLOSE_WAIT_MS
     private var lastBoardRecognizedAt = 0L
@@ -539,6 +541,13 @@ class OverlayService : Service() {
 
         moveWaitEdit = createWaitEdit(AppPrefs.moveWaitMs(this)) { AppPrefs.setMoveWaitMs(this, it) }
         content.addView(createWaitRow("Ожидание после хода", moveWaitEdit!!), rowParams(bottom = dp(3)))
+        beforeRestartWaitEdit = createWaitEdit(AppPrefs.beforeRestartWaitMs(this)) {
+            AppPrefs.setBeforeRestartWaitMs(this, it)
+        }
+        content.addView(
+            createWaitRow("Ожидание перед перезапуском", beforeRestartWaitEdit!!),
+            rowParams(bottom = dp(3)),
+        )
         restartWaitEdit = createWaitEdit(AppPrefs.restartWaitMs(this)) {
             AppPrefs.setRestartWaitMs(this, it)
         }
@@ -947,6 +956,7 @@ class OverlayService : Service() {
         roundsLimited = null
         roundsEdit = null
         moveWaitEdit = null
+        beforeRestartWaitEdit = null
         restartWaitEdit = null
         rewardCloseWaitEdit = null
         modeX1 = null
@@ -1037,6 +1047,7 @@ class OverlayService : Service() {
         accessibilityNotice?.visibility = if (accessibilityConnected) View.GONE else View.VISIBLE
         roundsEdit?.isEnabled = roundsLimited?.isChecked == true && !autoRunning
         moveWaitEdit?.isEnabled = !autoRunning
+        beforeRestartWaitEdit?.isEnabled = !autoRunning
         restartWaitEdit?.isEnabled = !autoRunning
         rewardCloseWaitEdit?.isEnabled = !autoRunning
         resizeExpandedPanel()
@@ -1524,9 +1535,10 @@ class OverlayService : Service() {
         }
 
         val moveWait = moveWaitEdit?.text?.toString()?.toIntOrNull()
+        val beforeRestartWait = beforeRestartWaitEdit?.text?.toString()?.toIntOrNull()
         val restartWait = restartWaitEdit?.text?.toString()?.toIntOrNull()
         val rewardCloseWait = rewardCloseWaitEdit?.text?.toString()?.toIntOrNull()
-        if (moveWait == null || restartWait == null || rewardCloseWait == null) {
+        if (moveWait == null || beforeRestartWait == null || restartWait == null || rewardCloseWait == null) {
             setStatus("Укажите все ожидания в миллисекундах.")
             return
         }
@@ -1543,6 +1555,7 @@ class OverlayService : Service() {
 
         roundLimit = limit
         moveWaitMs = moveWait
+        beforeRestartWaitMs = beforeRestartWait
         restartWaitMs = restartWait
         rewardCloseWaitMs = rewardCloseWait
         roundProgress.reset()
@@ -1707,12 +1720,15 @@ class OverlayService : Service() {
 
         syncField(frame.closed)
 
+        // Use the count from before the tap: the next frame may already show rewards.
+        val waitBeforeRestart = frame.closedCount == 14 || frame.closedCount == 15
+
         if (pendingCell >= 0 && !frame.closed[pendingCell]) {
             pendingCell = -1
         }
 
         if (pendingCell >= 0) {
-            tapCell(pendingCell) { afterAutoAction(restarted = false) }
+            tapCell(pendingCell) { afterAutoAction(restarted = false, waitBeforeRestart = waitBeforeRestart) }
             return
         }
 
@@ -1724,14 +1740,19 @@ class OverlayService : Service() {
         }
 
         pendingCell = cell
-        tapCell(cell) { afterAutoAction(restarted = false) }
+        tapCell(cell) { afterAutoAction(restarted = false, waitBeforeRestart = waitBeforeRestart) }
     }
 
-    private fun afterAutoAction(restarted: Boolean) {
+    private fun afterAutoAction(restarted: Boolean, waitBeforeRestart: Boolean = false) {
         val seq = autoSeq
         mainHandler.postDelayed({
             if (autoRunning && seq == autoSeq) {
-                dismissThenContinue(if (restarted) restartWaitMs.toLong() else 0L)
+                val extraWait = when {
+                    restarted -> restartWaitMs.toLong()
+                    waitBeforeRestart -> beforeRestartWaitMs.toLong()
+                    else -> 0L
+                }
+                dismissThenContinue(extraWait)
             }
         }, moveWaitMs.toLong())
     }

@@ -11,6 +11,7 @@ object AppPrefs {
     private const val KEY_RESET_MODE = "reset_mode"
     private const val KEY_CALIBRATION = "calibration"
     private const val KEY_MOVE_WAIT_MS = "move_wait_ms"
+    private const val KEY_BEFORE_RESTART_WAIT_MS = "before_restart_wait_ms"
     private const val KEY_RESTART_WAIT_MS = "restart_wait_ms"
     private const val KEY_REWARD_CLOSE_WAIT_MS = "reward_close_wait_ms"
     private const val KEY_PANEL_COLLAPSED = "panel_collapsed"
@@ -18,6 +19,7 @@ object AppPrefs {
     const val RESET_MODE_X1 = 1
     const val RESET_MODE_X10 = 10
     const val DEFAULT_MOVE_WAIT_MS = 200
+    const val DEFAULT_BEFORE_RESTART_WAIT_MS = 500
     const val DEFAULT_RESTART_WAIT_MS = 500
     const val DEFAULT_REWARD_CLOSE_WAIT_MS = 100
 
@@ -40,6 +42,13 @@ object AppPrefs {
 
     fun setMoveWaitMs(context: Context, value: Int) {
         prefs(context).edit().putInt(KEY_MOVE_WAIT_MS, value).apply()
+    }
+
+    fun beforeRestartWaitMs(context: Context): Int =
+        prefs(context).getInt(KEY_BEFORE_RESTART_WAIT_MS, DEFAULT_BEFORE_RESTART_WAIT_MS)
+
+    fun setBeforeRestartWaitMs(context: Context, value: Int) {
+        prefs(context).edit().putInt(KEY_BEFORE_RESTART_WAIT_MS, value).apply()
     }
 
     fun restartWaitMs(context: Context): Int =
